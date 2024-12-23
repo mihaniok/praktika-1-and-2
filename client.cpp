@@ -28,7 +28,7 @@ void communicateWithServer(int clientSocket) {
         send(clientSocket, command.c_str(), command.length(), 0);
 
         // Получение ответа от сервера
-        char buffer[1024];
+        char buffer[4096];
         memset(buffer, 0, sizeof(buffer));
         int bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
         if (bytesRead > 0) {

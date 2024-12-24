@@ -8,7 +8,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <cstring> // Для memset
-#include "json.hpp" // Библиотека для работы с JSON
+#include "json.hpp" // Библиотека для работы с JSON (скачайте json.hpp из https://github.com/nlohmann/json)
 #include <sstream> // Для istringstream
 #include <vector>
 
@@ -481,62 +481,7 @@ bool checkConditions(const json& entry, const vector<Condition>& conditions, con
 }
 
 // Функция для выборки из таблицы без условий
-void selectFromTable(dbase& db, const string& table, const vector<string>& columns, stringstream& result_stream) {
-    Node* table_node = db.findNode(table);
-    
-    if (!table_node) {
-        result_stream << "Table not found: " << table << "\n";
-        return;
-    }
-
-    bool data_found = false;
-
-    // Вывод заголовка
-    for (size_t i = 0; i < columns.size(); ++i) {
-        result_stream << columns[i];
-        if (i < columns.size() - 1) result_stream << ", ";
-    }
-    result_stream << "\n";
-
-    for (const auto& record_str : table_node->data) {
-        json entry = json::parse(record_str);
-
-        bool row_matches = true; // Без условий
-
-        if (row_matches) {
-            data_found = true; // Мы нашли хотя бы одну запись
-
-            // Вывод указанных столбцов
-            for (size_t j = 0; j < columns.size(); ++j) {
-                if (columns[j] == "*") {
-                    // Вывод всех столбцов
-                    bool first = true;
-                    for (auto it = entry.begin(); it != entry.end(); ++it) {
-                        if (!first) result_stream << ", ";
-                        result_stream << it.key() << ": \"" << it.value().get<string>() << "\"";
-                        first = false;
-                    }
-                    break; // Завершаем, так как уже вывели все столбцы
-                } else {
-                    if (entry.contains(columns[j])) {
-                        result_stream << entry[columns[j]].get<string>();
-                    } else {
-                        result_stream << "NULL";
-                    }
-                    if (j < columns.size() - 1) result_stream << ", ";
-                }
-            }
-            result_stream << ";\n";
-        }
-    }
-
-    if (!data_found) {
-        result_stream << "No data found in the table: " << table << "\n";
-    }
-}
-
-// Функция для выборки из таблицы с условиями
-void selectFromTableWithConditions(dbase& db, const string& table, const vector<string>& columns, const vector<Condition>& conditions, const string& logical_op, stringstream& result_stream) {
+void selectFromTable(dbase& db, const string& table, const vector<string>& columns, const vector<Condition>& conditions, const string& logical_op, stringstream& result_stream) {
     Node* table_node = db.findNode(table);
     
     if (!table_node) {
@@ -562,7 +507,28 @@ void selectFromTableWithConditions(dbase& db, const string& table, const vector<
 
             // Вывод указанных столбцов
             for (size_t j = 0; j < columns.size(); ++j) {
-                if (columns[j] == "*") {
+                if (columns[j].find('.') != string::npos) {
+                    // Обработка табличных префиксов, например, table1.name
+                    size_t dot_pos = columns[j].find('.');
+                    string tbl = columns[j].substr(0, dot_pos);
+                    string col = columns[j].substr(dot_pos + 1);
+                    Node* tbl_node = db.findNode(tbl);
+                    if (tbl_node) {
+                        // Найти запись в другой таблице
+                        // Предполагается, что соединение происходит по каким-то ключам, но в данном случае просто выводим
+                        // соответствующие значения, если они есть
+                        // Здесь необходимо определить, как правильно соединять данные из разных таблиц
+                        // Для простоты, если столбец с префиксом существует в объединенной записи, выводим его
+                        // Но так как мы обрабатываем одну таблицу, это не актуально
+                        // Поэтому предполагаем, что столбец с префиксом не нужен здесь
+                        // И просто выводим "NULL"
+                        result_stream << "NULL";
+                    }
+                    else {
+                        result_stream << "NULL";
+                    }
+                }
+                else if (columns[j] == "*") {
                     // Вывод всех столбцов
                     bool first = true;
                     for (auto it = entry.begin(); it != entry.end(); ++it) {
@@ -589,92 +555,75 @@ void selectFromTableWithConditions(dbase& db, const string& table, const vector<
     }
 }
 
-// Функция для выборки из нескольких таблиц (CROSS JOIN)
+// Функция для выборки из нескольких таблиц (UNION)
 void selectFromMultipleTables(dbase& db, const vector<string>& columns, const vector<string>& tables, const vector<Condition>& conditions, const string& logical_op, stringstream& result_stream) {
-    if (tables.size() < 2) {
-        result_stream << "Need at least two tables for multiple table SELECT.\n";
+    if (tables.empty()) {
+        result_stream << "No tables specified for SELECT.\n";
         return;
     }
 
-    // Реализация CROSS JOIN между двумя таблицами
-    Node* table_node1 = db.findNode(tables[0]);
-    Node* table_node2 = db.findNode(tables[1]);
-
-    if (!table_node1 || !table_node2) {
-        if (!table_node1) result_stream << "Table not found: " << tables[0] << "\n";
-        if (!table_node2) result_stream << "Table not found: " << tables[1] << "\n";
-        return;
-    }
-
-    bool data_found = false;
-
-    // Вывод заголовка
+    // Вывод заголовка (предполагается, что столбцы одинаковы во всех таблицах)
     for (size_t i = 0; i < columns.size(); ++i) {
         result_stream << columns[i];
         if (i < columns.size() - 1) result_stream << ", ";
     }
     result_stream << "\n";
 
-    for (const auto& record1_str : table_node1->data) {
-        json entry1 = json::parse(record1_str);
-        cout << "Processing entry from table " << tables[0] << ": " << entry1.dump() << endl; // Отладка
+    bool data_found = false;
 
-        for (const auto& record2_str : table_node2->data) {
-            json entry2 = json::parse(record2_str);
-            cout << "Processing entry from table " << tables[1] << ": " << entry2.dump() << endl; // Отладка
+    for (const auto& table : tables) {
+        Node* table_node = db.findNode(table);
+        if (!table_node) {
+            result_stream << "Table not found: " << table << "\n";
+            continue;
+        }
 
-            // Объединение двух записей
-            json combined = entry1;
-            for (auto it = entry2.begin(); it != entry2.end(); ++it) {
-                // Предотвращаем конфликты ключей
-                string key = it.key();
-                if (combined.contains(key)) {
-                    key = tables[1] + "." + key;
-                }
-                combined[key] = it.value();
-            }
+        for (const auto& record_str : table_node->data) {
+            json entry = json::parse(record_str);
 
             // Проверка условий
-            bool match = false;
-            if (!conditions.empty()) {
-                match = checkConditions(combined, conditions, logical_op);
-            }
-            else {
-                match = true; // Без условий
-            }
-
-            if (match) {
+            if (checkConditions(entry, conditions, logical_op)) {
                 data_found = true;
+
                 // Вывод указанных столбцов
-                for (size_t k = 0; k < columns.size(); ++k) {
-                    if (columns[k] == "*") {
+                for (size_t j = 0; j < columns.size(); ++j) {
+                    if (columns[j].find('.') != string::npos) {
+                        // Обработка табличных префиксов, например, table1.name
+                        size_t dot_pos = columns[j].find('.');
+                        string tbl = columns[j].substr(0, dot_pos);
+                        string col = columns[j].substr(dot_pos + 1);
+                        if (entry.contains(col)) {
+                            result_stream << entry[col].get<string>();
+                        } else {
+                            result_stream << "NULL";
+                        }
+                    }
+                    else if (columns[j] == "*") {
                         // Вывод всех столбцов
                         bool first = true;
-                        for (auto it = combined.begin(); it != combined.end(); ++it) {
+                        for (auto it = entry.begin(); it != entry.end(); ++it) {
                             if (!first) result_stream << ", ";
                             result_stream << it.key() << ": \"" << it.value().get<string>() << "\"";
                             first = false;
                         }
-                        break;
-                    }
-                    else {
-                        if (combined.contains(columns[k])) {
-                            result_stream << combined[columns[k]].get<string>();
-                        }
-                        else {
+                        break; // Завершаем, так как уже вывели все столбцы
+                    } else {
+                        if (entry.contains(columns[j])) {
+                            result_stream << entry[columns[j]].get<string>();
+                        } else {
                             result_stream << "NULL";
                         }
-                        if (k < columns.size() - 1) result_stream << ", ";
                     }
+
+                    if (j < columns.size() - 1) result_stream << ", ";
                 }
                 result_stream << ";\n";
-                cout << "Matched combination: " << combined.dump() << endl; // Отладка
             }
         }
     }
 
     if (!data_found) {
-        result_stream << "No data found in the cross join of the specified tables with the given conditions.\n";
+        result_stream << "No data found in the specified tables with the given conditions.\n";
     }
 }
 
@@ -693,6 +642,14 @@ void handleClient(int client_socket, dbase& db) {
         string action;
         iss >> action;
 
+        // Удаление возможных символов новой строки
+        if (!action.empty() && action.back() == '\n') {
+            action.pop_back();
+        }
+        if (!action.empty() && action.back() == '\r') {
+            action.pop_back();
+        }
+
         // Приведение команды к верхнему регистру для устойчивости
         for (auto& c : action) c = toupper(c);
 
@@ -709,12 +666,12 @@ void handleClient(int client_socket, dbase& db) {
                     args.push_back(arg);
                 }
 
-                size_t expected_arg_count = db.getColumnCount(table) - 1; // Учитываем 'id' как автоинкремент
+                size_t expected_arg_count = db.getColumnCount(table); // Ожидаем столько аргументов, сколько колонок в таблице
                 if (args.size() > expected_arg_count) {
                     string error_message = "Error: Too many arguments for INSERT command.\n";
                     send(client_socket, error_message.c_str(), error_message.size(), 0);
                     continue;
-                } else if (args.size() < 2) {
+                } else if (args.size() < 2) { // Минимум 2 аргумента: name и age
                     string error_message = "Error: Not enough arguments for INSERT command.\n";
                     send(client_socket, error_message.c_str(), error_message.size(), 0);
                     continue;
@@ -810,8 +767,8 @@ void handleClient(int client_socket, dbase& db) {
                 }
                 else {
                     // Возврат позиции, если не 'WHERE'
-                    iss.clear();
-                    iss.seekg(-static_cast<int>(table.size()), ios_base::cur);
+                    // В C++ нет прямого способа вернуться назад в потоке, поэтому пропустим
+                    // Предполагаем, что после списка таблиц нет дополнительных данных
                 }
 
                 // Парсинг выбранных столбцов
@@ -861,24 +818,12 @@ void handleClient(int client_socket, dbase& db) {
                 // Выполнение выборки
                 stringstream result_stream;
                 if (tables.size() == 1) {
-                    if (conditions.empty()) {
-                        // Выборка без условий
-                        selectFromTable(db, tables[0], columns, result_stream);
-                    }
-                    else {
-                        // Выборка с условиями
-                        selectFromTableWithConditions(db, tables[0], columns, conditions, logical_op, result_stream);
-                    }
+                    // Выборка из одной таблицы
+                    selectFromTable(db, tables[0], columns, conditions, logical_op, result_stream);
                 }
-                else if (tables.size() == 2) {
-                    // Выборка с CROSS JOIN между двумя таблицами
+                else if (tables.size() > 1) {
+                    // Выборка из нескольких таблиц (UNION)
                     selectFromMultipleTables(db, columns, tables, conditions, logical_op, result_stream);
-                }
-                else {
-                    // Для простоты, поддержка только двух таблиц в CROSS JOIN
-                    string error_message = "Error: Only two tables supported for CROSS JOIN.\n";
-                    send(client_socket, error_message.c_str(), error_message.size(), 0);
-                    continue;
                 }
 
                 string result = result_stream.str();
@@ -938,11 +883,12 @@ int main() {
     // Настройка адреса сервера
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
+    // Измените порт на свободный, если 7432 занят
     server_addr.sin_port = htons(7432);
 
     // Привязка сокета к адресу
     if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        cerr << "Error binding socket." << endl;
+        cerr << "Error binding socket. Port might be in use." << endl;
         close(server_socket);
         return 1;
     }

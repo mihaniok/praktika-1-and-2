@@ -2,16 +2,15 @@
 
 #include <iostream>
 #include <fstream>
-#include <sys/stat.h>       // mkdir
+#include <sys/stat.h>       
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <stdexcept>
-#include <cstring>          // memset
-#include <thread>          
+#include <cstring>          
+#include <thread>           
 #include <sstream>
 #include <string>
-#include <vector>
 #include "json.hpp"
 
 using namespace std;
@@ -106,7 +105,6 @@ struct ConditionList {
 };
 
 
-// mkdir-обёртка
 
 int my_mkdir(const char* path){
     return mkdir(path, 0777);
@@ -182,8 +180,7 @@ void loadData(dbase& db){
                     istringstream iss(line);
                     while(count_fields < 10){
                         string tmp;
-                        if(!getline(iss, tmp, ' ')) break; 
-                        // trim
+                        if(!getline(iss, tmp, ' ')) break;
                         while(!tmp.empty() && (tmp.front() == ' ' || tmp.front() == '\t')) tmp.erase(tmp.begin());
                         while(!tmp.empty() && (tmp.back() == ' ' || tmp.back() == '\t'))   tmp.pop_back();
                         fields[count_fields++] = tmp;
@@ -489,7 +486,7 @@ void selectFromMultipleTables(dbase& db,
         out << "No tables specified.\n";
         return;
     }
-    // Заголовок (предполагается, что столбцы одинаковы во всех таблицах)
+    // Заголовок
     for(int i = 0; i < col_count; i++){
         if(i > 0) out << " ";
         out << columns[i];
@@ -683,20 +680,21 @@ void handleClient(int client_socket, dbase& db) {
             break;
         }
         else if(action == "INSERT"){
-            // INSERT <table> <name> <age> [<adress>] [<number>]
+            // INSERT <table> <name> <age> <adress> <number>
             string table;
             iss >> table;
             const int MAX_ARGS = 10;
-            vector<string> args;
+            string args[MAX_ARGS];
+            int arg_count = 0;
             string tmp;
-            while(iss >> tmp && args.size() < MAX_ARGS){
+            while(iss >> tmp && arg_count < MAX_ARGS){
                 // remove quotes
                 if(!tmp.empty() && tmp.front() == '"' && tmp.back() == '"'){
                     tmp = tmp.substr(1, tmp.size()-2);
                 }
-                args.push_back(tmp);
+                args[arg_count++] = tmp;
             }
-            if(args.size() < 2){
+            if(arg_count < 2){
                 string e = "Error: Not enough args for INSERT.\n";
                 send(client_socket, e.c_str(), e.size(), 0);
                 continue;
@@ -704,8 +702,9 @@ void handleClient(int client_socket, dbase& db) {
             json entry;
             entry["name"] = args[0];
             entry["age"] = args[1];
-            if(args.size() > 2) entry["adress"] = args[2]; else entry["adress"] = "";
-            if(args.size() > 3) entry["number"] = args[3]; else entry["number"] = "";
+            if(arg_count > 2) entry["adress"] = args[2]; else entry["adress"] = "";
+            if(arg_count > 3) entry["number"] = args[3]; else entry["number"] = "";
+            // Отладочное сообщение
             cout << "INSERT command: table=" << table << ", name=" << entry["name"] 
                  << ", age=" << entry["age"] << ", adress=" << entry["adress"] 
                  << ", number=" << entry["number"] << endl;
@@ -717,6 +716,7 @@ void handleClient(int client_socket, dbase& db) {
             // DELETE FROM <table> <column> <value>
             string from_word, table, col, val;
             iss >> from_word >> table >> col >> val;
+            // Приводим 'FROM' к верхнему регистру
             for(size_t i = 0; i < from_word.size(); i++){
                 from_word[i] = toupper(from_word[i]);
             }
@@ -757,6 +757,7 @@ void handleClient(int client_socket, dbase& db) {
                 }
 
                 columns_str = cmd.substr(select_pos + 6, from_pos - (select_pos +6));
+                // Удаляем возможные пробелы
                 size_t first = columns_str.find_first_not_of(" \t");
                 size_t last = columns_str.find_last_not_of(" \t");
                 if(first != string::npos && last != string::npos){
@@ -774,6 +775,8 @@ void handleClient(int client_socket, dbase& db) {
                     tables_str = tables_str.substr(first, end_cross - first +1);
                 }
                 table1 = tables_str;
+
+                // Извлекаем table2
                 size_t table2_start = cross_join_pos + 10; // длина "CROSS JOIN"
                 size_t where_start = cmd.find("WHERE", table2_start);
                 if(where_start != string::npos){
@@ -849,11 +852,13 @@ void handleClient(int client_socket, dbase& db) {
                 }
 
                 // Извлекаем таблицы (разделенные пробелами)
-                vector<string> tables;
+                const int MAX_TABLES = 5;
+                string tables[MAX_TABLES];
+                int tab_count = 0;
                 istringstream tiss(tables_and_where);
                 string tbl;
-                while(tiss >> tbl){
-                    tables.push_back(tbl);
+                while(tab_count < MAX_TABLES && tiss >> tbl){
+                    tables[tab_count++] = tbl;
                 }
 
                 // Парсим условия WHERE, если есть
@@ -872,20 +877,12 @@ void handleClient(int client_socket, dbase& db) {
 
                 // Выполняем SELECT
                 ostringstream out;
-                if(tables.size() == 1){
+                if(tab_count == 1){
                     selectFromTable(db, tables[0], columns, col_count, cond_list, logical_op, out);
                 }
                 else{
                     // Поддержка нескольких таблиц (UNION)
-                    const int MAX_TABLES = 5;
-                    string tbls[MAX_TABLES];
-                    int tab_count = 0;
-                    for(auto &t: tables){
-                        if(tab_count < MAX_TABLES){
-                            tbls[tab_count++] = t;
-                        }
-                    }
-                    selectFromMultipleTables(db, columns, col_count, tbls, tab_count, cond_list, logical_op, out);
+                    selectFromMultipleTables(db, columns, col_count, tables, tab_count, cond_list, logical_op, out);
                 }
                 string result = out.str();
                 send(client_socket, result.c_str(), result.size(), 0);
@@ -914,6 +911,14 @@ int main(){
         cerr << "Can't create socket.\n";
         return 1;
     }
+
+    int opt = 1;
+    if (setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        cerr << "setsockopt(SO_REUSEADDR) failed.\n";
+        close(srv);
+        return 1;
+    }
+
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
